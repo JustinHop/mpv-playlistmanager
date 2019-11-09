@@ -8,7 +8,7 @@ local settings = {
   --uses :gsub('pattern', 'replace'), read more http://lua-users.org/wiki/StringLibraryTutorial
   --'all' will match any extension or protocol if it has one
   --uses json and parses it into a lua table to be able to support .conf file
-  
+
   filename_replace = "",
 
 --[=====[ START OF SAMPLE REPLACE, to use remove start and end line
@@ -66,7 +66,7 @@ local settings = {
   playlist_savepath = "/home/anon/Documents/",
 
 
-  --show playlist or filename every time a new file is loaded 
+  --show playlist or filename every time a new file is loaded
   --2 shows playlist, 1 shows current file(filename strip applied) as osd text, 0 shows nothing
   --instead of using this you can also call script-message playlistmanager show playlist/filename
   --ex. KEY playlist-next ; script-message playlistmanager show playlist
@@ -188,7 +188,7 @@ function on_loaded()
   else
     directory = nil
   end
-  
+
   refresh_globals()
   if settings.sync_cursor_on_load then
     cursor=pos
@@ -196,7 +196,9 @@ function on_loaded()
     if playlist_visible then draw_playlist() end
   end
 
+  local fancyname = get_name_from_index(pos)
   strippedname = stripfilename(mp.get_property('media-title'))
+  local playname = mp.get_property("playlist/"..pos.."/title")
   if settings.show_playlist_on_fileload == 2 then
     showplaylist()
   elseif settings.show_playlist_on_fileload == 1 then
@@ -205,6 +207,10 @@ function on_loaded()
   if settings.set_title_stripped then
     mp.set_property("title", settings.title_prefix..strippedname..settings.title_suffix)
   end
+
+  -- mp.set_property("title", fancyname)
+  msg.info("on_loaded", "strippedname", strippedname)
+  msg.info("on_loaded", "playname", playname)
 
   local didload = false
   --if we promised to load files on launch do it
@@ -333,8 +339,14 @@ end
 
 function parse_filename(string, name, index)
   local base = tostring(plen):len()
+
+  msg.info(
+    string:gsub("%%N", "\\N")
+               :gsub("%%pos", string.format("%%0"..base.."d", index+1))
+               :gsub("%%name", stripfilename(name)))
+
   return string:gsub("%%N", "\\N")
-               :gsub("%%pos", string.format("%0"..base.."d", index+1))
+               :gsub("%%pos", string.format("%%0"..base.."d", index+1))
                :gsub("%%name", stripfilename(name))
 end
 
@@ -379,7 +391,7 @@ function draw_playlist()
     start=0
     showall=true
   end
-  if start > math.max(plen-settings.showamount-1, 0) then 
+  if start > math.max(plen-settings.showamount-1, 0) then
     start=plen-settings.showamount
     showrest=true
   end
@@ -526,7 +538,7 @@ function playlist(force_dir)
         end
       end
     end
-    popen:close()    
+    popen:close()
     if c2 > 0 or c>0 then
       mp.osd_message("Added "..c + c2.." files to playlist")
     else
@@ -546,26 +558,38 @@ end
 
 --saves the current playlist into a m3u file
 function save_playlist()
+  refresh_globals()
   local length = mp.get_property_number('playlist-count', 0)
   if length == 0 then return end
-  local savepath = utils.join_path(settings.playlist_savepath, os.time().."-size_"..length.."-playlist.m3u")
+  local savepath = utils.join_path(settings.playlist_savepath, os.time().."-size_"..length - pos.."-playlist.m3u")
   local file, err = io.open(savepath, "w")
   if not file then
     msg.error("Error in creating playlist file, check permissions and paths: "..(err or ""))
   else
-    local i=0
+    local hash = {}
+    local i=pos
+    file:write("#EXTM3U", "\n")
     while i < length do
       local pwd = mp.get_property("working-directory")
       local filename = mp.get_property('playlist/'..i..'/filename')
       local fullpath = filename
-      if not filename:match("^%a%a+:%/%/") then
-        fullpath = utils.join_path(pwd, filename)
+      if (not hash[filename]) then
+        if not filename:match("^%a%a+:%/%/") then
+          fullpath = utils.join_path(pwd, filename)
+        end
+        local title = nil
+        if url_table[filename] then
+          title = url_table[filename]
+        else
+          title = mp.get_property('playlist/'..i..'/media-title')
+        end
+        if title then file:write("#EXTINF:,"..title.."\n") end
+        file:write(fullpath, "\n")
       end
-      local title = mp.get_property('playlist/'..i..'/title')
-      if title then file:write("#EXTINF:,"..title.."\n") end
-      file:write(fullpath, "\n")
+      hash[filename] = true
       i=i+1
     end
+    mp.osd_message("Playlist written to: "..savepath)
     msg.info("Playlist written to: "..savepath)
     file:close()
   end
@@ -703,8 +727,19 @@ mp.observe_property('playlist-count', "number", function()
 end)
 
 --script message handler
-function handlemessage(msg, value, value2)
-  if msg == "show" and value == "playlist" then
+function handlemessage(mesg, value, value2)
+  local deb = "handlemessage, "
+  if mesg then
+    deb = deb .. mesg .. ", "
+  end
+  if value then
+    deb = deb .. value .. ", "
+  end
+  if value2 then
+    deb = deb .. value2
+  end
+  msg.info(deb)
+  if mesg == "show" and value == "playlist" then
     if value2 ~= "toggle" then
       showplaylist()
       return
@@ -713,19 +748,32 @@ function handlemessage(msg, value, value2)
       return
     end
   end
-  if msg == "show" and value == "filename" and strippedname and value2 then
+  if mesg == "show" and value == "filename" and strippedname and value2 then
     mp.commandv('show-text', strippedname, tonumber(value2)*1000 ) ; return
   end
-  if msg == "show" and value == "filename" and strippedname then
+  if mesg == "show" and value == "filename" and strippedname then
     mp.commandv('show-text', strippedname ) ; return
   end
-  if msg == "sort" then sortplaylist(value) ; return end
-  if msg == "shuffle" then shuffleplaylist() ; return end
-  if msg == "loadfiles" then playlist(value) ; return end
-  if msg == "save" then save_playlist() ; return end
-  if msg == "addurl" then
+  if mesg == "sort" then sortplaylist(value) ; return end
+  if mesg == "shuffle" then shuffleplaylist() ; return end
+  if mesg == "loadfiles" then playlist(value) ; return end
+  if mesg == "save" then save_playlist() ; return end
+  if mesg == "addurl" then
     url_table[value] = value2
     refresh_globals()
+    local i=0
+    if length then
+      while i < length do
+        local localfile = mp.get_property('playlist/'..i..'/filename')
+        local localtitle = mp.get_property('playlist/'..i..'/title')
+        msg.info("handlemessage", msg, value, value2)
+        if localfile == value then
+          mp.set_property('playlist/'..i..'/title', value2)
+          break
+        end
+        i=i+1
+      end
+    end
     if playlist_visible then showplaylist() end
     return
   end
