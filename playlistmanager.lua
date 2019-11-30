@@ -584,6 +584,7 @@ function save_playlist()
     while i < length do
       local pwd = mp.get_property("working-directory")
       local filename = mp.get_property('playlist/'..i..'/filename')
+      local duration = mp.get_property('playlist/'..i..'/duration') or 0
       local fullpath = filename
       if (not hash[filename]) then
         if not filename:match("^%a%a+:%/%/") then
@@ -593,9 +594,9 @@ function save_playlist()
         if url_table[filename] then
           title = url_table[filename]
         else
-          title = mp.get_property('playlist/'..i..'/media-title')
+          title = mp.get_property('playlist/'..i..'/title')
         end
-        if title then file:write("#EXTINF:,"..title.."\n") end
+        if title then file:write("#EXTINF:" .. duration .. "," .. title .. "\n") end
         file:write(fullpath, "\n")
       end
       hash[filename] = true
@@ -734,6 +735,15 @@ mp.observe_property('playlist-count', "number", function()
     then
       requested_urls[filename] = true
       mp.commandv('script-message', 'resolveurltitle', filename)
+    end
+    if i ~= pos
+      and filename
+      and filename:match('^https?://')
+      and title
+      and not url_table[filename]
+      and not requested_urls[filename]
+    then
+      url_table[filename] = title
     end
     i=i+1
   end

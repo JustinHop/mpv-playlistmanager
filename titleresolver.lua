@@ -17,6 +17,7 @@ mp.register_script_message("resolveurltitle", function(filename)
         uploader = '[' .. json['uploader'] .. ']: '
       end
       local title = (is_playlist and '<playlist>: ' or '') .. uploader .. json['title'] .. extractor
+      title = string.gsub(title, "%%", "")
       mp.commandv('script-message', 'playlistmanager', 'addurl', filename, title)
       msg.info("Added", filename, title)
     end
